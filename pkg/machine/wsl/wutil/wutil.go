@@ -31,17 +31,30 @@ func FindWSL() string {
 	once.Do(func() {
 		var locs []string
 
+		root := os.Getenv("SystemRoot")
+		if root == "" {
+			root = `C:\Windows`
+		}
+		root_path := filepath.Join(root, "System32", "wsl.exe")
+
+		// If `podman machine ssh` is run inside an SSH session weird things can happen with
+		// the executables. Errors like this one may occour
+		//
+		// Program 'wsl.exe' failed to run: The file cannot be accessed by the system
+		//
+		// therefore, prefer the system32 path under SSH
+		if ssh_connection := os.Getenv("SSH_CONNECTION"); ssh_connection != "" {
+			wslPath = root_path
+			return
+		}
+
 		// Prefer Windows App Store version
 		if localapp := getLocalAppData(); localapp != "" {
 			locs = append(locs, filepath.Join(localapp, "Microsoft", "WindowsApps", "wsl.exe"))
 		}
 
 		// Otherwise, the common location for the legacy system version
-		root := os.Getenv("SystemRoot")
-		if root == "" {
-			root = `C:\Windows`
-		}
-		locs = append(locs, filepath.Join(root, "System32", "wsl.exe"))
+		locs = append(locs, root_path)
 
 		for _, loc := range locs {
 			if err := fileutils.Exists(loc); err == nil {
