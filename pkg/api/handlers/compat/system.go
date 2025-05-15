@@ -95,6 +95,5 @@ func GetDiskUsage(w http.ResponseWriter, r *http.Request) {
 		Containers:  ctnrs,
 		Volumes:     vols,
 		BuildCache:  []*docker.BuildCache{},
-		BuilderSize: 0,
 	}})
 }
