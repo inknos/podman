@@ -15,6 +15,7 @@ import (
 	"github.com/containers/podman/v5/libpod"
 	"github.com/containers/podman/v5/libpod/logs"
 	"github.com/containers/podman/v5/pkg/api/handlers/utils"
+	"github.com/containers/podman/v5/pkg/api/handlers/utils/apiutil"
 	api "github.com/containers/podman/v5/pkg/api/types"
 	"github.com/containers/podman/v5/pkg/util"
 	log "github.com/sirupsen/logrus"
@@ -104,6 +105,27 @@ func LogsFromContainer(w http.ResponseWriter, r *http.Request) {
 		close(logChannel)
 	}()
 
+	// Get container inspect data once to use for both header logic and TTY detection
+	inspectData, err := ctnr.Inspect(false)
+	if err != nil {
+		utils.InternalServerError(w, fmt.Errorf("failed to obtain logs for Container '%s': %w", name, err))
+		return
+	}
+
+	// Set Content-Type header similar to attach endpoint
+	// Use the same logic as writeHijackHeader in libpod/util.go
+	contentType := "application/vnd.docker.raw-stream"
+	if !inspectData.Config.Tty {
+		version := "4.7.0"
+		if !utils.IsLibpodRequest(r) {
+			version = "1.42.0" // docker only used two digits "1.42" but our semver lib needs the extra .0 to work
+		}
+		if _, err := apiutil.SupportedVersion(r, ">= "+version); err == nil {
+			contentType = "application/vnd.docker.multiplexed-stream"
+		}
+	}
+
+	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
 
 	flush := func() {
@@ -119,11 +141,6 @@ func LogsFromContainer(w http.ResponseWriter, r *http.Request) {
 	writeHeader := true
 	// Docker does not write stream headers iff the container has a tty.
 	if !utils.IsLibpodRequest(r) {
-		inspectData, err := ctnr.Inspect(false)
-		if err != nil {
-			utils.InternalServerError(w, fmt.Errorf("failed to obtain logs for Container '%s': %w", name, err))
-			return
-		}
 		writeHeader = !inspectData.Config.Tty
 	}
 

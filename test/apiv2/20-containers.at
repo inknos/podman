@@ -48,7 +48,29 @@ response_headers=$(cat "$WORKDIR/curl.headers.out")
 like "$response_headers" ".*Content-Type: application/vnd\.docker\.raw-stream.*" "hijacked connection header: Content-type: application/vnd.docker.raw-stream"
 like "$response_headers" ".*Upgrade: tcp.*" "hijacked connection header: Upgrade: tcp"
 
+# Test logs endpoint Content-Type headers
+t GET "containers/foo/logs?stdout=true&stderr=true" 200
+response_headers=$(cat "$WORKDIR/curl.headers.out")
+like "$response_headers" ".*Content-Type: application/vnd\.docker\.raw-stream.*" "logs vnd.docker.raw-stream docker v1.40"
+# check new vnd.docker.multiplexed-stream header for logs
+t GET "/v1.42/containers/foo/logs?stdout=true&stderr=true" 200
+response_headers=$(cat "$WORKDIR/curl.headers.out")
+like "$response_headers" ".*Content-Type: application/vnd\.docker\.multiplexed-stream.*" "logs vnd.docker.multiplexed-stream docker v1.42"
+t GET "/v4.6.0/libpod/containers/foo/logs?stdout=true&stderr=true" 200
+response_headers=$(cat "$WORKDIR/curl.headers.out")
+like "$response_headers" ".*Content-Type: application/vnd\.docker\.raw-stream.*" "logs vnd.docker.raw-stream libpod v4.6.0"
+t GET "/v4.7.0/libpod/containers/foo/logs?stdout=true&stderr=true" 200
+response_headers=$(cat "$WORKDIR/curl.headers.out")
+like "$response_headers" ".*Content-Type: application/vnd\.docker\.multiplexed-stream.*" "logs vnd.docker.multiplexed-stream libpod v4.7.0"
+
+# test TTY container logs should always use raw-stream
+podman run --rm -d --replace --name footty -t $IMAGE sh -c "echo $mytext;sleep 42"
+t GET "/v4.7.0/libpod/containers/footty/logs?stdout=true&stderr=true" 200
+response_headers=$(cat "$WORKDIR/curl.headers.out")
+like "$response_headers" ".*Content-Type: application/vnd\.docker\.raw-stream.*" "TTY logs should use raw-stream even for v4.7.0"
+
 t POST "containers/foo/kill" 204
+t POST "containers/footty/kill" 204
 
 podman run --replace --name=foo -v /tmp:/tmp $IMAGE true
 # cannot kill non-running container
