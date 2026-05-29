@@ -19,6 +19,7 @@ import (
 	"go.podman.io/common/pkg/config"
 	"go.podman.io/podman/v6/cmd/podman/registry"
 	"go.podman.io/podman/v6/pkg/machine"
+	"go.podman.io/podman/v6/pkg/machine/vmbootpatch"
 	"go.podman.io/podman/v6/pkg/machine/certificates"
 	"go.podman.io/podman/v6/pkg/machine/connection"
 	machineDefine "go.podman.io/podman/v6/pkg/machine/define"
@@ -598,8 +599,20 @@ func Start(mc *vmconfigs.MachineConfig, mp vmconfigs.VMProvider, opts machine.St
 	}
 	callBackFuncs.Add(cleanGV)
 
-	// if there are generic things that need to be done, a preStart function could be added here
-	// should it be extensive
+	// Manage GRUB boot menu timeout based on log level: in debug mode,
+	// show the menu for 10 seconds; otherwise remove any previously set
+	// timeout so the VM boots instantly.
+	if mp.VMType() != machineDefine.WSLVirt {
+		if logrus.IsLevelEnabled(logrus.DebugLevel) {
+			if err := vmbootpatch.SetGRUBTimeout(mc.ImagePath.GetPath(), mp.VMType(), 10); err != nil {
+				logrus.Warnf("Failed to set GRUB debug timeout (continuing): %v", err)
+			}
+		} else {
+			if err := vmbootpatch.ClearGRUBTimeout(mc.ImagePath.GetPath(), mp.VMType()); err != nil {
+				logrus.Debugf("Failed to clear GRUB debug timeout (continuing): %v", err)
+			}
+		}
+	}
 
 	// releaseFunc is if the provider starts a vm using a go command
 	// and we still need control of it while it is booting until the ready
