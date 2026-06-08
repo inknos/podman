@@ -341,6 +341,38 @@ func processSecrets(query *BuildQuery, contextDirectory string, queryValues url.
 	return secrets, nil
 }
 
+// processSSH processes SSH sources for podman-remote operations.
+// Moves SSH key files outside build context to prevent accidental inclusion in images.
+func processSSH(query *BuildQuery, contextDirectory string, queryValues url.Values) ([]string, error) {
+	sshSources := []string{}
+	m := []string{}
+	if err := utils.ParseOptionalJSONField(query.SSH, "ssh", queryValues, &m); err != nil {
+		return nil, err
+	}
+
+	for _, sshSource := range m {
+		parts := strings.SplitN(sshSource, "=", 2)
+		if len(parts) == 2 {
+			paths := strings.Split(parts[1], ",")
+			modifiedPaths := []string{}
+			for _, p := range paths {
+				builderDirectory, _ := filepath.Split(contextDirectory)
+				newPath := filepath.Join(builderDirectory, p)
+				oldPath := filepath.Join(contextDirectory, p)
+				if err := os.Rename(oldPath, newPath); err == nil {
+					modifiedPaths = append(modifiedPaths, newPath)
+				} else {
+					modifiedPaths = append(modifiedPaths, p)
+				}
+			}
+			sshSources = append(sshSources, parts[0]+"="+strings.Join(modifiedPaths, ","))
+		} else {
+			sshSources = append(sshSources, sshSource)
+		}
+	}
+	return sshSources, nil
+}
+
 // createBuildOptions creates a buildah BuildOptions struct from query parameters and build context.
 // WARNING: caller must call the cleanup function if not nil.
 func createBuildOptions(query *BuildQuery, buildCtx *BuildContext, queryValues url.Values, r *http.Request) (*buildahDefine.BuildOptions, cleanUpFunc, error) {
@@ -382,6 +414,11 @@ func createBuildOptions(query *BuildQuery, buildCtx *BuildContext, queryValues u
 		return nil, nil, utils.GetBadRequestError("secrets", query.Secrets, err)
 	}
 
+	sshSources, err := processSSH(query, buildCtx.ContextDirectory, queryValues)
+	if err != nil {
+		return nil, nil, utils.GetBadRequestError("ssh", query.SSH, err)
+	}
+
 	addhosts, err := utils.ParseJSONOptionalSlice(query.AddHosts, queryValues, "extrahosts")
 	if err != nil {
 		return nil, nil, utils.GetBadRequestError("extrahosts", query.AddHosts, err)
@@ -397,6 +434,7 @@ func createBuildOptions(query *BuildQuery, buildCtx *BuildContext, queryValues u
 
 	// Process tags
 	tags := query.Tags
+
 	var output string
 	var additionalTags []string
 	if len(tags) > 0 {
@@ -742,6 +780,7 @@ func createBuildOptions(query *BuildQuery, buildCtx *BuildContext, queryValues u
 			ShmSize:            strconv.Itoa(query.ShmSize),
 			Ulimit:             ulimits,
 			Secrets:            secrets,
+			SSHSources:         sshSources,
 			Volumes:            query.Volumes,
 		},
 		CompatVolumes:                  compatVolumes,

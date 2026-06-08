@@ -1,0 +1,2 @@
+FROM alpine
+RUN --mount=type=ssh,id=mysshkey test -S "$SSH_AUTH_SOCK"

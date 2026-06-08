@@ -167,6 +167,21 @@ var _ = Describe("Podman build", func() {
 		Expect(session).Should(ExitWithError(125, expectStderr))
 	})
 
+	It("podman build with ssh key from file", func() {
+		keyFile := filepath.Join(podmanTest.TempDir, "test_ssh_key")
+		cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-f", keyFile, "-N", "")
+		err := cmd.Run()
+		Expect(err).ToNot(HaveOccurred())
+
+		session := podmanTest.Podman([]string{"build", "-f", "build/Containerfile.with-ssh", "-t", "ssh-test", "--ssh", fmt.Sprintf("mysshkey=%s", keyFile), "build/"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+
+		session = podmanTest.Podman([]string{"rmi", "ssh-test"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+	})
+
 	It("podman build with logfile", func() {
 		logfile := filepath.Join(podmanTest.TempDir, "logfile")
 		session := podmanTest.Podman([]string{"build", "--pull=never", "--tag", "test", "--logfile", logfile, "build/basicalpine"})

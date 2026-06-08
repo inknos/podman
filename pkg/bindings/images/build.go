@@ -685,6 +685,44 @@ func prepareSecrets(secrets []string, contextDir string, tempManager *remote_bui
 	return secretsForRemote, tarContent, nil
 }
 
+// prepareSSHSources processes SSH sources for remote builds by copying key files
+// into the context directory and rewriting source paths to relative names.
+// WARNING: Caller must ensure tempManager.Cleanup() is called to remove any temporary files created.
+func prepareSSHSources(sshSources []string, contextDir string, tempManager *remote_build_helpers.TempFileManager) ([]string, []string, error) {
+	if len(sshSources) == 0 {
+		return nil, nil, nil
+	}
+
+	sshForRemote := []string{}
+	tarContent := []string{}
+
+	for _, sshSource := range sshSources {
+		parts := strings.SplitN(sshSource, "=", 2)
+		if len(parts) == 2 {
+			paths := strings.Split(parts[1], ",")
+			modifiedPaths := []string{}
+			for _, p := range paths {
+				srcFile, err := os.Open(p)
+				if err != nil {
+					return nil, nil, err
+				}
+				tmpSSHFile, err := tempManager.CreateTempFileFromReader(contextDir, "podman-build-ssh-*", srcFile)
+				srcFile.Close()
+				if err != nil {
+					return nil, nil, err
+				}
+				tarContent = append(tarContent, tmpSSHFile)
+				modifiedPaths = append(modifiedPaths, filepath.Base(tmpSSHFile))
+			}
+			sshForRemote = append(sshForRemote, parts[0]+"="+strings.Join(modifiedPaths, ","))
+		} else {
+			sshForRemote = append(sshForRemote, sshSource)
+		}
+	}
+
+	return sshForRemote, tarContent, nil
+}
+
 // prepareRemoteRequestBody creates the request body for the build API call.
 // It handles both simple tar archives and multipart form data for builds with
 // additional build contexts, supporting URLs, images, and local directories.
@@ -1071,6 +1109,21 @@ func build(ctx context.Context, containerFiles []string, options types.BuildOpti
 		}
 		requestParts.Params.Add("secrets", c)
 		buildFilePaths.tarContent = append(buildFilePaths.tarContent, secretsTarContent...)
+	}
+
+	// SSH sources are absolute host paths; copy key files into context and ship them via tar.
+	sshForRemote, sshTarContent, err := prepareSSHSources(options.CommonBuildOpts.SSHSources, options.ContextDirectory, tempManager)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(sshForRemote) > 0 {
+		c, err := jsoniter.MarshalToString(sshForRemote)
+		if err != nil {
+			return nil, err
+		}
+		requestParts.Params.Add("ssh", c)
+		buildFilePaths.tarContent = append(buildFilePaths.tarContent, sshTarContent...)
 	}
 
 	requestParts, err = prepareRequestBody(ctx, requestParts, buildFilePaths, options)
